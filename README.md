@@ -4,6 +4,8 @@
 > Time series analysis, regional comparison, and short-term forecasting
 > of air raid sirens in Ukraine, built with AI as the primary engineering tool.
 
+**🔗 Live dashboard:** https://ukraine-air-raid-time.streamlit.app/
+
 ---
 
 ## 🇺🇦 Українська
@@ -45,8 +47,11 @@
   сигнал відбою, часто в періоди інтенсивних бойових дій (наприклад,
   Запорізька область, березень 2022). Видалити їх означало б видалити
   сигнал, не шум.
-- Через довгий хвіст довгих тривог, статистика тривалості завжди показує
-  **медіану поряд із середнім** (медіана ≈ 31 хв, середнє ≈ 50 хв).
+- Через довгий хвіст довгих тривог, медіана (≈31 хв) суттєво нижча за
+  середнє (≈50 хв). У самому дашборді (секція 3) показано лише середнє
+  значення — показ обох метрик одночасно під час тестування плутав
+  нетехнічних користувачів. Натомість це розходження прямо пояснюється
+  в підписі під графіком.
 
 **2. Виключення поточного дня**
 Датасет оновлюється щодня, але "сьогодні" — завжди неповний день
@@ -128,13 +133,21 @@ streamlit run app.py
 
 ### Що показує дашборд
 
-1. Динаміка тривог у часі (тренд, кілька регіонів одночасно, до 5)
-2. Сезонність: по годинах доби та днях тижня
-3. Тривалість тривог (медіана + середнє)
-4. Порівняння регіонів
-5. Прогноз на 7–30 днів з довірчим інтервалом + метрики якості (MAE, MAPE)
+1. Динаміка тривог у часі — інтерактивний графік (Chart.js) з кнопками
+   вибору регіону, швидкими кнопками періоду (5р/1р/6м/3м/1м/тиждень)
+   та перетягуванням/масштабуванням
+2. Сезонність: циферблатна діаграма по годинах доби (UTC) та графік
+   по днях тижня — обидва з перемикачами регіонів
+3. Тривалість тривог — середнє значення по регіонах (градієнт
+   зелений→жовтий за тривалістю)
+4. Порівняння регіонів за загальною кількістю тривог
+5. Прогноз — картки по кожному регіону: середнє за останні 14 днів,
+   очікувана зміна (% + абсолютна різниця, з кольоровим кодуванням за
+   магнітудою), похибка прогнозу
+6. Вихідні vs будні — інформаційне порівняння (без рекомендацій
+   щодо безпеки чи планування поїздок)
 
-Фільтри: тільки нічні тривоги, тільки останні 30 днів.
+Фільтр: тільки нічні тривоги (≈22:00–06:00 UTC).
 
 ### Відома обмеженість
 
@@ -185,8 +198,11 @@ This is not a replacement for official alert systems — it's a tool for
   fill-ins — often clustering around intense combat periods (e.g.
   Zaporizka oblast, March 2022). Dropping them would remove signal,
   not noise.
-- Because of this long tail, duration stats always report the
-  **median alongside the mean** (median ≈ 31 min, mean ≈ 50 min).
+- Because of this long tail, the median (≈31 min) is notably lower
+  than the mean (≈50 min). The dashboard itself (section 3) shows only
+  the mean -- showing both metrics side by side confused non-technical
+  reviewers during testing. This gap is instead explained directly in
+  the caption under the chart.
 
 **2. Excluding the current (in-progress) day**
 The dataset updates daily, but "today" is always a partial day. Including
@@ -256,13 +272,21 @@ streamlit run app.py
 
 ### What the dashboard shows
 
-1. Alert trend over time (multiple regions, up to 5)
-2. Seasonality: by hour of day and day of week
-3. Alert duration (median + mean)
-4. Region comparison
-5. 7–30 day forecast with confidence interval + quality metrics (MAE, MAPE)
+1. Alert trend over time -- interactive chart (Chart.js) with region
+   toggle buttons, quick time-range buttons (5y/1y/6m/3m/1m/1week), and
+   drag-to-pan / scroll-to-zoom
+2. Seasonality: a clock-face diagram for hour-of-day (UTC) and a bar
+   chart for day-of-week, both with region toggles
+3. Alert duration -- mean value per region (green-to-amber gradient by
+   duration)
+4. Region comparison by total alert count
+5. Forecast -- per-region cards: average over the last 14 days,
+   expected change (% plus absolute difference, color-coded by
+   magnitude), forecast error
+6. Weekend vs weekday -- informational comparison only (no safety or
+   travel-planning recommendation)
 
-Filters: night-only alerts, last 30 days only.
+Filter: night-only alerts (≈22:00-06:00 UTC).
 
 ### Known limitations
 

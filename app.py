@@ -289,7 +289,7 @@ trend_fig.update_layout(
     xaxis_title="Дата", yaxis_title="Кількість тривог/день",
     legend_title="Регіон", hovermode="x unified",
 )
-st.plotly_chart(trend_fig, width='stretch')
+st.plotly_chart(trend_fig)
 
 if filter_night_only:
     st.caption(
@@ -320,7 +320,7 @@ with col2:
         sub = weekday_counts[weekday_counts["region"] == region].set_index("weekday").reindex(WEEKDAY_ORDER).reset_index()
         wd_fig.add_trace(go.Bar(x=[WEEKDAY_UA[d] for d in sub["weekday"]], y=sub["count"], name=region))
     wd_fig.update_layout(barmode="group", xaxis_title="День тижня", yaxis_title="Кількість тривог")
-    st.plotly_chart(wd_fig, width='stretch')
+    st.plotly_chart(wd_fig)
 
 # === SECTION 3: Duration ===
 st.header("3. Тривалість тривог")
@@ -343,7 +343,7 @@ st.header("4. Порівняння регіонів (загальна кільк
 region_totals = filtered_df.groupby("region").size().sort_values(ascending=False)
 totals_fig = go.Figure(go.Bar(x=region_totals.index, y=region_totals.values))
 totals_fig.update_layout(xaxis_title="Регіон", yaxis_title="Кількість тривог (з обраними фільтрами)")
-st.plotly_chart(totals_fig, width='stretch')
+st.plotly_chart(totals_fig)
 
 # === SECTION 5: Forecast ===
 st.header("5. Прогноз")
@@ -377,7 +377,7 @@ for region in selected_regions:
                 name="80% довірчий інтервал", showlegend=True,
             ))
             fc_fig.update_layout(xaxis_title="Дата", yaxis_title="Кількість тривог/день")
-            st.plotly_chart(fc_fig, width='stretch')
+            st.plotly_chart(fc_fig)
 
             m1, m2, m3 = st.columns(3)
             m1.metric("MAE (backtest, 14 днів)", f"{bt['MAE']:.1f} тривог/день")

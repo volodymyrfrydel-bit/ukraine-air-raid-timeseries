@@ -20,6 +20,7 @@ to decide whether to take shelter during an actual alert.
 
 import streamlit as st
 import pandas as pd
+import json
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import sys
@@ -37,6 +38,155 @@ WEEKDAY_UA = {
     "Monday": "Пн", "Tuesday": "Вт", "Wednesday": "Ср", "Thursday": "Чт",
     "Friday": "Пт", "Saturday": "Сб", "Sunday": "Нд",
 }
+
+CHARTJS_PATH = Path(__file__).resolve().parent / "src" / "static" / "chart.umd.js"
+
+
+def _load_chartjs_source() -> str:
+    """
+    Chart.js is bundled locally (src/static/chart.umd.js) rather than loaded
+    from a CDN. This avoids any dependency on external network access at
+    runtime (some sandboxed/offline environments block CDN domains), and
+    avoids any risk of a CDN outage breaking the dashboard.
+    """
+    return CHARTJS_PATH.read_text()
+
+
+def render_hourly_clock(hourly_by_region: dict, height: int = 480) -> str:
+    """
+    Builds the self-contained HTML/Chart.js widget for the hour-of-day
+    clock chart. hourly_by_region: {region_name: [count for hour 0..23]}.
+    Colors map low->high counts on a green->amber->red scale, computed
+    per-region (each region's own max), so a quiet region doesn't look
+    uniformly "red" just because its busiest hour is still low in
+    absolute terms relative to a frontline region.
+    """
+    region_names = list(hourly_by_region.keys())
+    data_json = json.dumps(hourly_by_region)
+    buttons_html = "".join(
+        f'<button class="clock-btn" data-region="{r}" '
+        f'style="padding:6px 14px;border-radius:8px;border:0.5px solid rgba(128,128,128,0.4);'
+        f'background:{"#e6f1fb" if i == 0 else "transparent"};'
+        f'color:{"#0c447c" if i == 0 else "#444"};font-size:13px;cursor:pointer;margin-right:8px;">{r}</button>'
+        for i, r in enumerate(region_names)
+    )
+
+    return f"""
+    <div style="font-family:sans-serif;">
+      <div style="display:flex;flex-wrap:wrap;gap:0;margin-bottom:12px;">{buttons_html}</div>
+      <div style="position:relative;width:100%;height:{height-90}px;max-width:480px;margin:0 auto;">
+        <canvas id="clockChart"></canvas>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:0.75rem;font-size:12px;color:#666;">
+        <span>менше тривог</span>
+        <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:linear-gradient(to right,#639922,#EF9F27,#E24B4A);"></span>
+        <span>більше тривог</span>
+      </div>
+      <p style="text-align:center;font-size:12px;color:#999;margin-top:0.4rem;">Години у форматі UTC</p>
+    </div>
+    <script>{_load_chartjs_source()}</script>
+    <script>
+    const clockData = {data_json};
+    const regionNames = {json.dumps(region_names)};
+    const labels = Array.from({{length:24}}, (_, i) => i + ':00');
+
+    function colorFor(v, max) {{
+      const t = max > 0 ? v / max : 0;
+      let r, g, b;
+      if (t < 0.5) {{
+        const k = t / 0.5;
+        r = Math.round(99 + (239 - 99) * k);
+        g = Math.round(153 + (167 - 153) * k);
+        b = Math.round(34 + (39 - 34) * k);
+      }} else {{
+        const k = (t - 0.5) / 0.5;
+        r = Math.round(239 + (226 - 239) * k);
+        g = Math.round(167 + (75 - 167) * k);
+        b = Math.round(39 + (74 - 39) * k);
+      }}
+      return `rgb(${{r}},${{g}},${{b}})`;
+    }}
+
+    const hourLabelPlugin = {{
+      id: 'hourLabels',
+      afterDraw(chart) {{
+        const {{ ctx, chartArea }} = chart;
+        const cx = (chartArea.left + chartArea.right) / 2;
+        const cy = (chartArea.top + chartArea.bottom) / 2;
+        const radius = Math.min(chartArea.right - chartArea.left, chartArea.bottom - chartArea.top) / 2 + 16;
+        ctx.save();
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = '#888780';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (let i = 0; i < 24; i++) {{
+          const displayHour = i === 0 ? 24 : i;
+          const angle = (i / 24) * 2 * Math.PI - Math.PI / 2;
+          const x = cx + radius * Math.cos(angle);
+          const y = cy + radius * Math.sin(angle);
+          ctx.fillText(displayHour, x, y);
+        }}
+        ctx.restore();
+      }}
+    }};
+
+    const firstRegion = regionNames[0];
+    const ctx = document.getElementById('clockChart');
+    let chart = new Chart(ctx, {{
+      type: 'polarArea',
+      data: {{
+        labels: labels,
+        datasets: [{{
+          data: clockData[firstRegion],
+          backgroundColor: clockData[firstRegion].map(v => colorFor(v, Math.max(...clockData[firstRegion]))),
+          borderColor: 'rgba(255,255,255,0.4)',
+          borderWidth: 1
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: {{ padding: 28 }},
+        animation: {{ duration: 500, easing: 'easeOutQuart' }},
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{
+            backgroundColor: 'rgba(40,40,38,0.92)',
+            padding: 10,
+            bodyFont: {{ size: 12 }},
+            cornerRadius: 6,
+            displayColors: false,
+            callbacks: {{ label: (item) => item.label + ' \u2014 ' + item.raw + ' \u0442\u0440\u0438\u0432\u043e\u0433' }}
+          }}
+        }},
+        scales: {{
+          r: {{
+            ticks: {{ display: false }},
+            grid: {{ color: 'rgba(128,128,128,0.15)' }},
+            angleLines: {{ color: 'rgba(128,128,128,0.15)' }}
+          }}
+        }}
+      }},
+      plugins: [hourLabelPlugin]
+    }});
+
+    document.querySelectorAll('.clock-btn').forEach(btn => {{
+      btn.addEventListener('click', () => {{
+        const region = btn.dataset.region;
+        const vals = clockData[region];
+        const max = Math.max(...vals);
+        chart.data.datasets[0].data = vals;
+        chart.data.datasets[0].backgroundColor = vals.map(v => colorFor(v, max));
+        chart.update();
+        document.querySelectorAll('.clock-btn').forEach(b => {{
+          if (b === btn) {{ b.style.background = '#e6f1fb'; b.style.color = '#0c447c'; }}
+          else {{ b.style.background = 'transparent'; b.style.color = '#444'; }}
+        }});
+      }});
+    }});
+    </script>
+    """
+
 
 st.set_page_config(page_title="Повітряні тривоги в Україні — Time Series", layout="wide")
 
@@ -155,12 +305,11 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("По годинах доби (UTC)")
     hourly = filtered_df.groupby(["region", "hour"]).size().reset_index(name="count")
-    hour_fig = go.Figure()
+    hourly_by_region = {}
     for region in selected_regions:
-        sub = hourly[hourly["region"] == region]
-        hour_fig.add_trace(go.Bar(x=sub["hour"], y=sub["count"], name=region))
-    hour_fig.update_layout(barmode="group", xaxis_title="Година (UTC)", yaxis_title="Кількість тривог")
-    st.plotly_chart(hour_fig, width='stretch')
+        sub = hourly[hourly["region"] == region].set_index("hour").reindex(range(24), fill_value=0)
+        hourly_by_region[region] = sub["count"].tolist()
+    st.iframe(render_hourly_clock(hourly_by_region), height=500)
 
 with col2:
     st.subheader("По днях тижня")

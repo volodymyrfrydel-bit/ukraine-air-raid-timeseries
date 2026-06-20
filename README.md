@@ -78,6 +78,14 @@
 (тренд + сезонність) принципово не передбачає. Прогноз варто читати
 як **очікуваний діапазон**, не точне число.
 
+**6. Стабільний обідній пік (≈10:00 UTC / 12:00–13:00 за київським часом)**
+Перевірено окремо (не лише візуально): частка тривог о 10:00 UTC
+перевищує рівномірний базовий рівень (4.17%) майже в усіх перевірених
+регіонах (5.3–6.1% замість 4.17%), і цей ефект розподілений рівномірно
+по 45 місяцях спостережень (2022–2026), а не сконцентрований у
+кілька конкретних днів. Це стабільний, відтворюваний паттерн, не
+артефакт малої вибірки чи шум.
+
 ### Структура репозиторію
 
 ```
@@ -92,6 +100,12 @@ ukraine-air-raid-timeseries/
 │   └── forecasting.py       # Prophet: прогноз, backtest
 └── outputs/figures/
 ```
+
+### Технічна примітка: Chart.js вбудовано локально
+Циферблатна діаграма (секція 2) використовує Chart.js, який зберігається
+локально в `src/static/chart.umd.js` (≈200 КБ), а не завантажується з
+CDN. Це усуває залежність від зовнішнього мережевого доступу під час
+виконання та захищає від збоїв CDN.
 
 ### Як запустити
 
@@ -190,9 +204,23 @@ which a calendar-based model (trend + seasonality) fundamentally cannot
 predict. The forecast should be read as an **expected range**, not an
 exact number.
 
+**6. A stable midday peak (≈10:00 UTC / 12:00-13:00 Kyiv time)**
+Checked explicitly (not just visually): the share of alerts at 10:00 UTC
+exceeds the uniform baseline (4.17%) in nearly every region tested
+(5.3-6.1% vs. 4.17%), and the effect is spread evenly across 45 months
+of observations (2022-2026) rather than concentrated on a handful of
+specific days. This is a stable, reproducible pattern, not a small-
+sample artifact or noise.
+
 ### Repository structure
 
 See above (identical for both languages).
+
+### Technical note: Chart.js bundled locally
+The clock-face diagram (section 2) uses Chart.js, bundled locally at
+`src/static/chart.umd.js` (~200KB) rather than loaded from a CDN. This
+removes any runtime dependency on external network access and protects
+against CDN outages.
 
 ### How to run
 

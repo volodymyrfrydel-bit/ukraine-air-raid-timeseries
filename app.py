@@ -282,6 +282,97 @@ def render_weekday_chart(weekday_by_region: dict, height: int = 460) -> str:
     """
 
 
+def render_duration_barrels(duration_by_region: dict, height: int = 220) -> str:
+    """
+    Builds the self-contained HTML/Chart.js horizontal bar chart for
+    average alert duration per region. Only the mean is shown (not
+    median) -- a single, intuitive number per region, since showing both
+    confused non-technical users in review. Color gradient from green
+    (shorter duration) to amber (longer duration), scaled to the max
+    value among the currently selected regions.
+    """
+    region_names = list(duration_by_region.keys())
+    values = list(duration_by_region.values())
+    max_v = max(values) if values else 1
+
+    def color_for(v):
+        t = v / max_v if max_v else 0
+        r = round(59 + (239 - 59) * t)
+        g = round(109 + (167 - 109) * t)
+        b = round(17 + (39 - 17) * t)
+        return f"rgb({r},{g},{b})"
+
+    colors = [color_for(v) for v in values]
+
+    return f"""
+    <div style="font-family:sans-serif;">
+      <div style="position:relative;width:100%;height:{height-40}px;">
+        <canvas id="durationChart" role="img" aria-label="Середня тривалість тривог по регіонах у хвилинах">
+          {", ".join(f"{r}: {v:.1f} хв" for r, v in duration_by_region.items())}
+        </canvas>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:8px;font-size:12px;color:#999;">
+        <span>коротші</span>
+        <span style="display:inline-block;width:90px;height:8px;border-radius:4px;background:linear-gradient(to right,#3B6D11,#EF9F27);"></span>
+        <span>довші</span>
+      </div>
+    </div>
+    <script>{_load_chartjs_source()}</script>
+    <script>
+    new Chart(document.getElementById('durationChart'), {{
+      type: 'bar',
+      data: {{
+        labels: {json.dumps(region_names)},
+        datasets: [{{ data: {json.dumps(values)}, backgroundColor: {json.dumps(colors)}, borderRadius: 6 }}]
+      }},
+      options: {{
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: {{ legend: {{ display: false }} }},
+        scales: {{ x: {{ title: {{ display: true, text: 'хвилин, в середньому' }} }} }}
+      }}
+    }});
+    </script>
+    """
+
+
+def render_region_comparison(totals_by_region: dict, height: int = 220) -> str:
+    """
+    Builds the self-contained HTML/Chart.js horizontal bar chart for
+    total alert count comparison across regions. Single neutral color
+    (this is a count comparison, not a severity/intensity scale, so a
+    gradient would be misleading here -- magnitude alone tells the story).
+    """
+    region_names = list(totals_by_region.keys())
+    values = list(totals_by_region.values())
+
+    return f"""
+    <div style="font-family:sans-serif;">
+      <div style="position:relative;width:100%;height:{height}px;">
+        <canvas id="comparisonChart" role="img" aria-label="Порівняння загальної кількості тривог по регіонах">
+          {", ".join(f"{r}: {v}" for r, v in totals_by_region.items())}
+        </canvas>
+      </div>
+    </div>
+    <script>{_load_chartjs_source()}</script>
+    <script>
+    new Chart(document.getElementById('comparisonChart'), {{
+      type: 'bar',
+      data: {{
+        labels: {json.dumps(region_names)},
+        datasets: [{{ data: {json.dumps(values)}, backgroundColor: '#378ADD', borderRadius: 6 }}]
+      }},
+      options: {{
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: {{ legend: {{ display: false }} }},
+        scales: {{ x: {{ title: {{ display: true, text: 'кількість тривог' }} }} }}
+      }}
+    }});
+    </script>
+    """
+
+
 def render_hourly_clock(hourly_by_region: dict, height: int = 480) -> str:
     """
     Builds the self-contained HTML/Chart.js widget for the hour-of-day
@@ -552,26 +643,24 @@ with col2:
 
 # === SECTION 3: Duration ===
 st.header("3. Тривалість тривог")
-st.caption(
-    "Медіана показана поряд із середнім, бо невелика частка дуже довгих тривог "
-    "(переважно з прифронтових регіонів у періоди інтенсивних бойових дій) "
-    "суттєво підвищує середнє значення без зміни типової тривоги."
-)
 
-duration_stats = (
+duration_means = (
     filtered_df.groupby("region")["duration_min"]
-    .agg(median_min="median", mean_min="mean")
-    .round(1)
+    .mean()
     .reindex(selected_regions)
 )
-st.dataframe(duration_stats, width='stretch')
+components.html(render_duration_barrels(duration_means.to_dict()), height=220)
+st.caption(
+    "Показано лише середнє значення. Невелика частка дуже довгих тривог "
+    "(переважно з прифронтових регіонів у періоди інтенсивних бойових дій) "
+    "підвищує середнє порівняно з типовою тривогою — це врахована особливість "
+    "даних, не помилка."
+)
 
 # === SECTION 4: Region comparison ===
 st.header("4. Порівняння регіонів (загальна кількість тривог)")
 region_totals = filtered_df.groupby("region").size().sort_values(ascending=False)
-totals_fig = go.Figure(go.Bar(x=region_totals.index, y=region_totals.values))
-totals_fig.update_layout(xaxis_title="Регіон", yaxis_title="Кількість тривог (з обраними фільтрами)")
-st.plotly_chart(totals_fig)
+components.html(render_region_comparison(region_totals.to_dict()), height=220)
 
 # === SECTION 5: Forecast ===
 st.header("5. Прогноз")
@@ -590,36 +679,48 @@ for region in selected_regions:
             bt = get_backtest(region)
 
             daily = get_daily_series(region)
-            history_tail = daily.tail(60)
             future_part = forecast[forecast["ds"] > daily["ds"].max()]
 
-            fc_fig = go.Figure()
-            fc_fig.add_trace(go.Scatter(x=history_tail["ds"], y=history_tail["y"],
-                                         mode="lines", name="Факт (останні 60 днів)", line=dict(color="gray")))
-            fc_fig.add_trace(go.Scatter(x=future_part["ds"], y=future_part["yhat"],
-                                         mode="lines", name="Прогноз", line=dict(color="firebrick")))
-            fc_fig.add_trace(go.Scatter(
-                x=pd.concat([future_part["ds"], future_part["ds"][::-1]]),
-                y=pd.concat([future_part["yhat_upper"], future_part["yhat_lower"][::-1]]),
-                fill="toself", fillcolor="rgba(178,34,34,0.15)", line=dict(color="rgba(0,0,0,0)"),
-                name="80% довірчий інтервал", showlegend=True,
-            ))
-            fc_fig.update_layout(xaxis_title="Дата", yaxis_title="Кількість тривог/день")
-            st.plotly_chart(fc_fig)
+            last_14d_avg = daily["y"].tail(14).mean()
+            # Compare like-for-like: average of the next 7 forecasted days
+            # vs. average of the last 7 known days (week-over-week change),
+            # rather than a single-day snapshot.
+            last_7d_avg = daily["y"].tail(7).mean()
+            next_7d_avg = future_part["yhat"].head(7).mean()
+            abs_change = next_7d_avg - last_7d_avg
+            pct_change = (abs_change / last_7d_avg * 100) if last_7d_avg else 0
+
+            if pct_change > 3:
+                change_arrow = "↑"
+            elif pct_change < -3:
+                change_arrow = "↓"
+            else:
+                change_arrow = "→"
 
             m1, m2, m3 = st.columns(3)
-            m1.metric("MAE (backtest, 14 днів)", f"{bt['MAE']:.1f} тривог/день")
-            m2.metric("MAPE (backtest)", f"{bt['MAPE_%']:.1f}%" if bt["MAPE_%"] else "н/д")
-            m3.metric("Середнє у тестовому періоді", f"{bt['actual_mean']:.1f}/день")
+            m1.metric("Останні 14 днів", f"{last_14d_avg:.1f}/день")
+            m2.metric(
+                "Очікувана зміна (тиждень/тиждень)",
+                f"{change_arrow} {pct_change:+.0f}% ({abs_change:+.1f}/день)",
+            )
+            m3.metric("Похибка прогнозу", f"±{bt['MAE']:.1f}/день")
 
             st.caption(
-                "Високий MAPE при низькій середній кількості тривог/день — "
-                "очікувана математична особливість метрики на малих числах, "
-                "не показник 'поламаної' моделі. Дивіться MAE для абсолютної похибки."
+                f"Порівняння середньої кількості тривог за останні 7 днів "
+                f"({last_7d_avg:.1f}/день) з прогнозованими наступними 7 днями "
+                f"({next_7d_avg:.1f}/день)."
             )
 
         except ValueError as e:
             st.error(f"Недостатньо даних для прогнозу: {e}")
+
+st.caption(
+    "**Похибка** — середня абсолютна помилка моделі на історичних даних "
+    "(backtest): наскільки в середньому прогноз відхилявся від факту, "
+    "у тривогах на день. Високий відсоток похибки при малій середній "
+    "кількості тривог — очікувана математична особливість на малих "
+    "числах, не показник 'поламаної' моделі."
+)
 
 st.divider()
 st.caption(

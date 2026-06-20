@@ -41,6 +41,8 @@ WEEKDAY_UA = {
 }
 
 CHARTJS_PATH = Path(__file__).resolve().parent / "src" / "static" / "chart.umd.js"
+HAMMERJS_PATH = Path(__file__).resolve().parent / "src" / "static" / "hammer.min.js"
+ZOOM_PLUGIN_PATH = Path(__file__).resolve().parent / "src" / "static" / "chartjs-plugin-zoom.min.js"
 
 
 def _load_chartjs_source() -> str:
@@ -51,6 +53,233 @@ def _load_chartjs_source() -> str:
     avoids any risk of a CDN outage breaking the dashboard.
     """
     return CHARTJS_PATH.read_text()
+
+
+def _load_zoom_plugin_source() -> str:
+    """
+    chartjs-plugin-zoom (+ hammer.js, its touch/drag dependency) bundled
+    locally for the same reason as Chart.js itself -- no CDN dependency.
+    Used by the trend chart to support drag-to-pan and pinch/scroll-to-zoom
+    on the time axis.
+    """
+    return HAMMERJS_PATH.read_text() + "\n" + ZOOM_PLUGIN_PATH.read_text()
+
+
+REGION_COLORS = [
+    "#185fa5", "#85b7eb", "#e24b4a", "#639922", "#854f0b",
+]
+
+
+def render_trend_chart(dates: list, series_by_region: dict, height: int = 460) -> str:
+    """
+    Builds the self-contained HTML/Chart.js line chart for the alert
+    trend over time. dates: list of 'YYYY-MM-DD' strings (a single shared
+    calendar axis -- all regions are reindexed onto this same axis with
+    0-fill for days with no recorded alerts, so multiple regions compare
+    correctly rather than each drawing its own sparse date axis).
+    series_by_region: {region_name: [count per date]}.
+
+    Includes:
+    - Region toggle buttons (click to show/hide a line, same pattern as
+      the hourly clock chart)
+    - Quick time-range buttons (5y/1y/6m/3m/1m/1week/today)
+    - Drag-to-pan and scroll/pinch-to-zoom on the time axis
+      (chartjs-plugin-zoom, bundled locally)
+    """
+    region_names = list(series_by_region.keys())
+    colors = {r: REGION_COLORS[i % len(REGION_COLORS)] for i, r in enumerate(region_names)}
+
+    region_buttons_html = "".join(
+        f'<button class="region-btn" data-region="{r}" data-idx="{i}" '
+        f'style="padding:6px 14px;border-radius:8px;border:1.5px solid {colors[r]};'
+        f'background:{colors[r]}1a;color:#333;font-size:13px;cursor:pointer;margin-right:8px;margin-bottom:6px;">{r}</button>'
+        for i, r in enumerate(region_names)
+    )
+
+    range_buttons = [
+        ("5y", "5р"), ("1y", "1р"), ("6m", "6м"), ("3m", "3м"),
+        ("1m", "1м"), ("1w", "тиждень"), ("today", "сьогодні"),
+    ]
+    range_buttons_html = "".join(
+        f'<button class="range-btn" data-range="{key}" '
+        f'style="padding:5px 12px;border-radius:8px;border:0.5px solid rgba(128,128,128,0.4);'
+        f'background:transparent;color:#444;font-size:12px;cursor:pointer;margin-right:6px;margin-bottom:6px;">{label}</button>'
+        for key, label in range_buttons
+    )
+
+    datasets_json = json.dumps([
+        {
+            "label": r,
+            "data": series_by_region[r],
+            "borderColor": colors[r],
+            "borderWidth": 1.5,
+            "pointRadius": 0,
+            "tension": 0,
+            "hidden": False,
+        }
+        for r in region_names
+    ])
+
+    return f"""
+    <div style="font-family:sans-serif;">
+      <div style="display:flex;flex-wrap:wrap;">{region_buttons_html}</div>
+      <div style="display:flex;flex-wrap:wrap;margin-bottom:10px;">{range_buttons_html}</div>
+      <div style="position:relative;width:100%;height:{height-110}px;">
+        <canvas id="trendChart"></canvas>
+      </div>
+      <p style="text-align:center;font-size:11px;color:#999;margin-top:6px;">
+        Перетягуйте графік для зсуву, колесо миші / жест масштабування для збільшення
+      </p>
+    </div>
+    <script>{_load_chartjs_source()}</script>
+    <script>{_load_zoom_plugin_source()}</script>
+    <script>
+    const trendDates = {json.dumps(dates)};
+    const trendDatasets = {datasets_json};
+    let activeRegions = new Set(trendDatasets.map(d => d.label));
+
+    const trendCtx = document.getElementById('trendChart');
+    const trendChart = new Chart(trendCtx, {{
+      type: 'line',
+      data: {{ labels: trendDates, datasets: trendDatasets }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {{ mode: 'index', intersect: false }},
+        animation: {{ duration: 300 }},
+        plugins: {{
+          legend: {{ display: false }},
+          tooltip: {{
+            backgroundColor: 'rgba(40,40,38,0.92)',
+            cornerRadius: 6,
+            padding: 10
+          }},
+          zoom: {{
+            pan: {{ enabled: true, mode: 'x' }},
+            zoom: {{ wheel: {{ enabled: true }}, pinch: {{ enabled: true }}, mode: 'x' }},
+            limits: {{ x: {{ min: 0, max: trendDates.length - 1 }} }}
+          }}
+        }},
+        scales: {{
+          x: {{ ticks: {{ maxTicksLimit: 10, autoSkip: true }} }},
+          y: {{ beginAtZero: true, title: {{ display: true, text: 'Кількість тривог/день' }} }}
+        }}
+      }}
+    }});
+
+    document.querySelectorAll('.region-btn').forEach((btn) => {{
+      btn.addEventListener('click', () => {{
+        const region = btn.dataset.region;
+        const idx = parseInt(btn.dataset.idx);
+        if (activeRegions.has(region)) {{
+          activeRegions.delete(region);
+          btn.style.opacity = '0.4';
+        }} else {{
+          activeRegions.add(region);
+          btn.style.opacity = '1';
+        }}
+        trendChart.data.datasets[idx].hidden = !activeRegions.has(region);
+        trendChart.update();
+      }});
+    }});
+
+    function setTrendRange(rangeKey) {{
+      const total = trendDates.length;
+      let days;
+      switch(rangeKey) {{
+        case '5y': days = total; break;
+        case '1y': days = 365; break;
+        case '6m': days = 182; break;
+        case '3m': days = 91; break;
+        case '1m': days = 30; break;
+        case '1w': days = 7; break;
+        case 'today': days = 1; break;
+        default: days = total;
+      }}
+      const startIdx = Math.max(0, total - days);
+      trendChart.zoomScale('x', {{ min: startIdx, max: total - 1 }});
+    }}
+
+    document.querySelectorAll('.range-btn').forEach(btn => {{
+      btn.addEventListener('click', () => setTrendRange(btn.dataset.range));
+    }});
+    </script>
+    """
+
+
+def render_weekday_chart(weekday_by_region: dict, height: int = 460) -> str:
+    """
+    Builds the self-contained HTML/Chart.js bar chart for day-of-week
+    distribution, with region toggle buttons above it (same pattern as
+    the hourly clock and trend charts). weekday_by_region:
+    {region_name: [count for Mon..Sun]}.
+    """
+    region_names = list(weekday_by_region.keys())
+    colors = {r: REGION_COLORS[i % len(REGION_COLORS)] for i, r in enumerate(region_names)}
+    labels_ua = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
+
+    region_buttons_html = "".join(
+        f'<button class="wd-region-btn" data-region="{r}" data-idx="{i}" '
+        f'style="padding:6px 14px;border-radius:8px;border:1.5px solid {colors[r]};'
+        f'background:{colors[r]}1a;color:#333;font-size:13px;cursor:pointer;margin-right:8px;margin-bottom:6px;">{r}</button>'
+        for i, r in enumerate(region_names)
+    )
+
+    datasets_json = json.dumps([
+        {
+            "label": r,
+            "data": weekday_by_region[r],
+            "backgroundColor": colors[r],
+            "hidden": False,
+        }
+        for r in region_names
+    ])
+
+    return f"""
+    <div style="font-family:sans-serif;">
+      <div style="display:flex;flex-wrap:wrap;">{region_buttons_html}</div>
+      <div style="position:relative;width:100%;height:{height-60}px;">
+        <canvas id="weekdayChart"></canvas>
+      </div>
+    </div>
+    <script>{_load_chartjs_source()}</script>
+    <script>
+    const wdLabels = {json.dumps(labels_ua)};
+    const wdDatasets = {datasets_json};
+    let wdActiveRegions = new Set(wdDatasets.map(d => d.label));
+
+    const wdCtx = document.getElementById('weekdayChart');
+    const wdChart = new Chart(wdCtx, {{
+      type: 'bar',
+      data: {{ labels: wdLabels, datasets: wdDatasets }},
+      options: {{
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {{ legend: {{ display: false }} }},
+        scales: {{
+          x: {{ title: {{ display: true, text: 'День тижня' }} }},
+          y: {{ beginAtZero: true, title: {{ display: true, text: 'Кількість тривог' }} }}
+        }}
+      }}
+    }});
+
+    document.querySelectorAll('.wd-region-btn').forEach((btn) => {{
+      btn.addEventListener('click', () => {{
+        const region = btn.dataset.region;
+        const idx = parseInt(btn.dataset.idx);
+        if (wdActiveRegions.has(region)) {{
+          wdActiveRegions.delete(region);
+          btn.style.opacity = '0.4';
+        }} else {{
+          wdActiveRegions.add(region);
+          btn.style.opacity = '1';
+        }}
+        wdChart.data.datasets[idx].hidden = !wdActiveRegions.has(region);
+        wdChart.update();
+      }});
+    }});
+    </script>
+    """
 
 
 def render_hourly_clock(hourly_by_region: dict, height: int = 480) -> str:
@@ -224,15 +453,7 @@ def get_forecast_and_pattern(region, periods):
 df = get_data()
 all_regions = sorted(df["region"].unique())
 
-st.title("🚨 Повітряні тривоги в Україні: аналіз часових рядів")
-
-st.warning(
-    "⚠️ **Дисклеймер:** цей інструмент створено для історичного аналізу та "
-    "освітніх цілей. Він НЕ замінює офіційні системи попередження "
-    "(сирени, застосунки типу alerts.in.ua) і не повинен використовуватись "
-    "для прийняття рішення про укриття під час реальної тривоги.",
-    icon="⚠️",
-)
+st.title("🚨 Повітряні тривоги в Україні від 02.2022 до сьогодні")
 
 st.caption(
     f"Джерело даних: [Vadimkin/ukrainian-air-raid-sirens-dataset]"
@@ -240,6 +461,9 @@ st.caption(
     f"(volunteer_data_en.csv). Період: {df['started_at'].min().date()} — "
     f"{df['started_at'].max().date()}. Сьогоднішній (неповний) день виключено "
     f"з розрахунків тренду та прогнозу."
+)
+st.caption(
+    "⚠️ Історичні дані для аналізу, не замінюють офіційні сигнали тривоги."
 )
 
 # --- Region selection ---
@@ -277,25 +501,30 @@ if filter_last_30_days:
 # === SECTION 1: Trend over time ===
 st.header("1. Динаміка тривог у часі")
 
-trend_fig = go.Figure()
-for region in selected_regions:
-    daily = get_daily_series(region)
-    if filter_last_30_days:
-        cutoff_date = (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)).date()
-        daily = daily[daily["ds"].dt.date >= cutoff_date]
-    trend_fig.add_trace(go.Scatter(x=daily["ds"], y=daily["y"], mode="lines", name=region))
-
-trend_fig.update_layout(
-    xaxis_title="Дата", yaxis_title="Кількість тривог/день",
-    legend_title="Регіон", hovermode="x unified",
+# Build one shared calendar axis covering the full dataset (minus today,
+# which is always incomplete -- see daily_counts). All regions are
+# reindexed onto this same axis with 0-fill, so multiple lines compare
+# correctly instead of each drawing its own sparse set of dates.
+full_date_range = pd.date_range(
+    df["started_at"].min().date(),
+    (pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)).date(),
+    freq="D",
 )
-st.plotly_chart(trend_fig)
+trend_series_by_region = {}
+for region in selected_regions:
+    daily = get_daily_series(region).set_index("ds")["y"]
+    daily = daily.reindex(full_date_range, fill_value=0)
+    trend_series_by_region[region] = daily.tolist()
 
-if filter_night_only:
+trend_dates_str = full_date_range.strftime("%Y-%m-%d").tolist()
+components.html(render_trend_chart(trend_dates_str, trend_series_by_region), height=470)
+
+if filter_night_only or filter_last_30_days:
     st.caption(
-        "Примітка: фільтр 'нічні тривоги' застосовано лише до показників нижче "
-        "(огляд, розподіл по годинах), а не до графіку тренду вище — тренд завжди "
-        "показує повну денну кількість тривог для коректного порівняння з прогнозом."
+        "Примітка: фільтри 'нічні тривоги' та 'останні 30 днів' застосовано лише "
+        "до показників нижче (сезонність, тривалість, порівняння), а не до графіку "
+        "тренду вище — тренд завжди показує повну денну кількість тривог за весь "
+        "період для коректного порівняння з прогнозом."
     )
 
 # === SECTION 2: Seasonality patterns ===
@@ -315,12 +544,11 @@ with col1:
 with col2:
     st.subheader("По днях тижня")
     weekday_counts = filtered_df.groupby(["region", "weekday"]).size().reset_index(name="count")
-    wd_fig = go.Figure()
+    weekday_by_region = {}
     for region in selected_regions:
-        sub = weekday_counts[weekday_counts["region"] == region].set_index("weekday").reindex(WEEKDAY_ORDER).reset_index()
-        wd_fig.add_trace(go.Bar(x=[WEEKDAY_UA[d] for d in sub["weekday"]], y=sub["count"], name=region))
-    wd_fig.update_layout(barmode="group", xaxis_title="День тижня", yaxis_title="Кількість тривог")
-    st.plotly_chart(wd_fig)
+        sub = weekday_counts[weekday_counts["region"] == region].set_index("weekday").reindex(WEEKDAY_ORDER, fill_value=0)
+        weekday_by_region[region] = sub["count"].tolist()
+    components.html(render_weekday_chart(weekday_by_region), height=480)
 
 # === SECTION 3: Duration ===
 st.header("3. Тривалість тривог")

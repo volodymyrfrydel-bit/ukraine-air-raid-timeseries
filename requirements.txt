@@ -1,0 +1,4 @@
+pandas>=2.0
+prophet>=1.1
+streamlit>=1.30
+plotly>=5.18

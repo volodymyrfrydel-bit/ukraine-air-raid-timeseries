@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+venv/
+.venv/
+*.egg-info/
+
+# Raw data is fetched from the upstream GitHub repo, not committed here
+# (see README for the download command), keeping this repo lightweight.
+data/raw/*.csv

@@ -217,8 +217,14 @@ def render_forecast_cards(forecast_data: list) -> str:
     on a green-to-red scale based on magnitude (not direction alone --
     a small change in either direction stays neutral gray).
 
+    The comparison window (last N days vs. next N forecasted days) uses
+    N = forecast_horizon from the sidebar slider, so the slider actually
+    changes what's displayed -- previously this was hardcoded to 7 days
+    regardless of the slider, which made the slider a no-op from the
+    user's perspective (caught in review).
+
     forecast_data: list of dicts, one per region:
-        {region, last_14d_avg, pct_change, abs_change, mae}
+        {region, last_14d_avg, pct_change, abs_change, mae, compare_window}
     """
     def pct_color(pct):
         abs_pct = abs(pct)
@@ -233,13 +239,14 @@ def render_forecast_cards(forecast_data: list) -> str:
     for d in forecast_data:
         arrow = "↑" if d["pct_change"] > 3 else ("↓" if d["pct_change"] < -3 else "→")
         color = pct_color(d["pct_change"])
+        window = d["compare_window"]
         cards_html += f"""
         <div style="background:#fafafa;border:0.5px solid rgba(128,128,128,0.25);border-radius:10px;
                     padding:0.9rem;min-width:170px;flex:1;">
           <p style="font-size:13px;font-weight:500;margin:0 0 8px;color:#333;">{d['region']}</p>
           <p style="font-size:11px;color:#888;margin:0 0 2px;">Останні 14 днів</p>
           <p style="font-size:18px;font-weight:500;margin:0 0 10px;">{d['last_14d_avg']:.1f}/день</p>
-          <p style="font-size:11px;color:#888;margin:0 0 2px;">Зміна тиждень/тиждень</p>
+          <p style="font-size:11px;color:#888;margin:0 0 2px;">Зміна, наступні {window} дн.</p>
           <p style="font-size:18px;font-weight:500;margin:0 0 10px;color:{color};">
             {arrow} {d['pct_change']:+.0f}% ({d['abs_change']:+.1f}/день)
           </p>
@@ -658,6 +665,10 @@ if len(selected_regions) > MAX_REGIONS:
 filter_night_only = st.sidebar.checkbox("Тільки нічні тривоги (≈22:00–06:00 UTC)", value=False)
 
 forecast_horizon = st.sidebar.slider("Горизонт прогнозу (днів)", 7, 30, 14)
+st.sidebar.caption(
+    "Впливає на секцію 5 (Прогноз): порівнює останні N днів із наступними "
+    "N прогнозованими днями, де N — обране тут число."
+)
 
 if not selected_regions:
     st.info("👈 Оберіть хоча б один регіон у боковій панелі, щоб побачити аналіз.")
@@ -761,18 +772,25 @@ for region in selected_regions:
         daily = get_daily_series(region)
         future_part = forecast[forecast["ds"] > daily["ds"].max()]
 
-        last_14d_avg = daily["y"].tail(14).mean()
-        last_7d_avg = daily["y"].tail(7).mean()
-        next_7d_avg = future_part["yhat"].head(7).mean()
-        abs_change = next_7d_avg - last_7d_avg
-        pct_change = (abs_change / last_7d_avg * 100) if last_7d_avg else 0
+        # Compare like-for-like: average of the last N known days vs.
+        # average of the next N forecasted days, where N = forecast_horizon
+        # from the sidebar slider. Previously this was hardcoded to 7 days
+        # regardless of the slider value, so moving the slider changed the
+        # underlying Prophet forecast horizon but never changed what these
+        # cards displayed -- a real bug caught in review.
+        compare_window = min(forecast_horizon, len(daily))
+        last_n_avg = daily["y"].tail(compare_window).mean()
+        next_n_avg = future_part["yhat"].head(compare_window).mean()
+        abs_change = next_n_avg - last_n_avg
+        pct_change = (abs_change / last_n_avg * 100) if last_n_avg else 0
 
         forecast_cards_data.append({
             "region": region,
-            "last_14d_avg": last_14d_avg,
+            "last_14d_avg": daily["y"].tail(14).mean(),
             "pct_change": pct_change,
             "abs_change": abs_change,
             "mae": bt["MAE"],
+            "compare_window": compare_window,
         })
     except ValueError as e:
         st.error(f"{region}: недостатньо даних для прогнозу ({e})")

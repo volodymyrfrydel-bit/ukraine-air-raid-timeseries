@@ -13,16 +13,41 @@ a data quality issue.
 """
 
 from pathlib import Path
+import urllib.request
 import pandas as pd
 
 RAW_DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "raw" / "volunteer_data_en.csv"
+RAW_DATA_URL = (
+    "https://raw.githubusercontent.com/Vadimkin/ukrainian-air-raid-sirens-dataset"
+    "/main/datasets/volunteer_data_en.csv"
+)
 
 EXPECTED_COLUMNS = ["region", "started_at", "finished_at", "naive"]
+
+
+def ensure_raw_data(path: Path = RAW_DATA_PATH) -> Path:
+    """
+    Download the raw CSV if it isn't already present locally. This is
+    necessary for cloud deployments (e.g. Streamlit Community Cloud):
+    the data file is intentionally excluded from git (see .gitignore --
+    it updates daily upstream, so committing it would mean a stale
+    snapshot), and on a fresh deploy there is no local copy and no shell
+    access to run download_data.sh first. This function makes app.py
+    self-sufficient: first run downloads the data automatically.
+    """
+    if path.exists():
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    urllib.request.urlretrieve(RAW_DATA_URL, path)
+    return path
 
 
 def load_raw_data(path: Path = RAW_DATA_PATH) -> pd.DataFrame:
     """
     Load the raw volunteer air raid siren CSV and parse timestamps.
+    Downloads the file automatically if it isn't present yet (see
+    ensure_raw_data).
 
     Returns a DataFrame with:
         region       : str, oblast/city name
@@ -31,12 +56,7 @@ def load_raw_data(path: Path = RAW_DATA_PATH) -> pd.DataFrame:
         naive        : bool, True if finished_at is an approximation
                        (started_at + 30 min, no real end-of-alert message)
     """
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Raw data not found at {path}. "
-            "Download it from https://raw.githubusercontent.com/Vadimkin/"
-            "ukrainian-air-raid-sirens-dataset/main/datasets/volunteer_data_en.csv"
-        )
+    path = ensure_raw_data(path)
 
     df = pd.read_csv(path)
 

@@ -111,9 +111,20 @@ CDN. Це усуває залежність від зовнішнього мер
 
 ```bash
 pip install -r requirements.txt
-bash download_data.sh   # завантажує сирий CSV (не зберігається в git, бо оновлюється щодня)
 streamlit run app.py
 ```
+
+Дані завантажуються автоматично під час першого запуску, якщо файл
+відсутній (див. `ensure_raw_data()` в `data_loader.py`) — це важливо
+для хмарного деплою (наприклад, Streamlit Community Cloud), де немає
+можливості виконати окремий скрипт перед стартом застосунку.
+`bash download_data.sh` лишається доступним для ручного попереднього
+завантаження чи примусового оновлення файлу.
+
+### Деплой
+
+Застосунок задеплоєно на Streamlit Community Cloud і автоматично
+оновлюється при кожному `git push` у гілку `main`.
 
 ### Що показує дашборд
 
@@ -226,7 +237,20 @@ against CDN outages.
 
 ```bash
 pip install -r requirements.txt
-bash download_data.sh   # downloads the raw CSV (not committed to git -- it updates daily)
+streamlit run app.py
+```
+
+Data downloads automatically on first run if missing (see
+`ensure_raw_data()` in `data_loader.py`) -- important for cloud
+deployments (e.g. Streamlit Community Cloud), where there's no way to
+run a separate shell script before the app starts. `bash
+download_data.sh` remains available for manually pre-fetching the
+file or forcing a refresh.
+
+### Deployment
+
+Deployed on Streamlit Community Cloud, auto-updating on every
+`git push` to `main`.
 streamlit run app.py
 ```
 

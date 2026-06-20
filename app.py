@@ -90,15 +90,15 @@ def render_trend_chart(dates: list, series_by_region: dict, height: int = 460) -
     colors = {r: REGION_COLORS[i % len(REGION_COLORS)] for i, r in enumerate(region_names)}
 
     region_buttons_html = "".join(
-        f'<button class="region-btn" data-region="{r}" data-idx="{i}" '
+        f'<button class="region-btn" data-region="{r}" data-idx="{i}" data-color="{colors[r]}" '
         f'style="padding:6px 14px;border-radius:8px;border:1.5px solid {colors[r]};'
-        f'background:{colors[r]}1a;color:#333;font-size:13px;cursor:pointer;margin-right:8px;margin-bottom:6px;">{r}</button>'
+        f'background:{colors[r]};color:#fff;font-weight:500;font-size:13px;cursor:pointer;margin-right:8px;margin-bottom:6px;">{r}</button>'
         for i, r in enumerate(region_names)
     )
 
     range_buttons = [
         ("5y", "5р"), ("1y", "1р"), ("6m", "6м"), ("3m", "3м"),
-        ("1m", "1м"), ("1w", "тиждень"), ("today", "сьогодні"),
+        ("1m", "1м"), ("1w", "тиждень"),
     ]
     range_buttons_html = "".join(
         f'<button class="range-btn" data-range="{key}" '
@@ -171,12 +171,15 @@ def render_trend_chart(dates: list, series_by_region: dict, height: int = 460) -
       btn.addEventListener('click', () => {{
         const region = btn.dataset.region;
         const idx = parseInt(btn.dataset.idx);
+        const color = btn.dataset.color;
         if (activeRegions.has(region)) {{
           activeRegions.delete(region);
-          btn.style.opacity = '0.4';
+          btn.style.background = 'transparent';
+          btn.style.color = color;
         }} else {{
           activeRegions.add(region);
-          btn.style.opacity = '1';
+          btn.style.background = color;
+          btn.style.color = '#fff';
         }}
         trendChart.data.datasets[idx].hidden = !activeRegions.has(region);
         trendChart.update();
@@ -193,7 +196,6 @@ def render_trend_chart(dates: list, series_by_region: dict, height: int = 460) -
         case '3m': days = 91; break;
         case '1m': days = 30; break;
         case '1w': days = 7; break;
-        case 'today': days = 1; break;
         default: days = total;
       }}
       const startIdx = Math.max(0, total - days);
@@ -204,6 +206,84 @@ def render_trend_chart(dates: list, series_by_region: dict, height: int = 460) -
       btn.addEventListener('click', () => setTrendRange(btn.dataset.range));
     }});
     </script>
+    """
+
+
+def render_forecast_cards(forecast_data: list) -> str:
+    """
+    Builds a row of small forecast cards, one per region, shown side by
+    side (instead of a vertical list of expanders that hides most
+    regions behind a click). Each card's percentage change is colored
+    on a green-to-red scale based on magnitude (not direction alone --
+    a small change in either direction stays neutral gray).
+
+    forecast_data: list of dicts, one per region:
+        {region, last_14d_avg, pct_change, abs_change, mae}
+    """
+    def pct_color(pct):
+        abs_pct = abs(pct)
+        if abs_pct < 5:
+            return "#5F5E5A"  # neutral gray -- not a meaningful change
+        elif abs_pct < 15:
+            return "#854F0B"  # amber -- moderate change
+        else:
+            return "#A32D2D" if pct > 0 else "#3B6D11"  # red for increase, green for decrease
+
+    cards_html = ""
+    for d in forecast_data:
+        arrow = "↑" if d["pct_change"] > 3 else ("↓" if d["pct_change"] < -3 else "→")
+        color = pct_color(d["pct_change"])
+        cards_html += f"""
+        <div style="background:#fafafa;border:0.5px solid rgba(128,128,128,0.25);border-radius:10px;
+                    padding:0.9rem;min-width:170px;flex:1;">
+          <p style="font-size:13px;font-weight:500;margin:0 0 8px;color:#333;">{d['region']}</p>
+          <p style="font-size:11px;color:#888;margin:0 0 2px;">Останні 14 днів</p>
+          <p style="font-size:18px;font-weight:500;margin:0 0 10px;">{d['last_14d_avg']:.1f}/день</p>
+          <p style="font-size:11px;color:#888;margin:0 0 2px;">Зміна тиждень/тиждень</p>
+          <p style="font-size:18px;font-weight:500;margin:0 0 10px;color:{color};">
+            {arrow} {d['pct_change']:+.0f}% ({d['abs_change']:+.1f}/день)
+          </p>
+          <p style="font-size:11px;color:#888;margin:0 0 2px;">Похибка прогнозу</p>
+          <p style="font-size:14px;font-weight:500;margin:0;">±{d['mae']:.1f}/день</p>
+        </div>
+        """
+
+    return f"""
+    <div style="display:flex;flex-wrap:wrap;gap:10px;font-family:sans-serif;">
+      {cards_html}
+    </div>
+    """
+
+
+def render_weekend_info(weekend_data: list) -> str:
+    """
+    Informational card grid: average alerts/day on weekends vs. weekdays
+    for each selected region. Purely descriptive (no recommendation,
+    no "safer to travel here" framing) -- see project README for why:
+    using historical frequency to suggest where shelter/travel decisions
+    should be made is out of scope, since it could create false
+    confidence about actual real-time threat level.
+
+    weekend_data: list of dicts {region, weekend_avg, weekday_avg}.
+    """
+    cards_html = ""
+    for d in weekend_data:
+        diff_pct = ((d["weekend_avg"] - d["weekday_avg"]) / d["weekday_avg"] * 100) if d["weekday_avg"] else 0
+        cards_html += f"""
+        <div style="background:#fafafa;border:0.5px solid rgba(128,128,128,0.25);border-radius:10px;
+                    padding:0.9rem;min-width:170px;flex:1;">
+          <p style="font-size:13px;font-weight:500;margin:0 0 8px;color:#333;">{d['region']}</p>
+          <p style="font-size:11px;color:#888;margin:0 0 2px;">Вихідні (Сб-Нд), середнє/день</p>
+          <p style="font-size:18px;font-weight:500;margin:0 0 10px;">{d['weekend_avg']:.1f}</p>
+          <p style="font-size:11px;color:#888;margin:0 0 2px;">Будні, середнє/день</p>
+          <p style="font-size:18px;font-weight:500;margin:0;">{d['weekday_avg']:.1f}</p>
+        </div>
+        """
+
+    return f"""
+    <div style="display:flex;flex-wrap:wrap;gap:10px;font-family:sans-serif;">
+      {cards_html}
+    </div>
     """
 
 
@@ -219,9 +299,9 @@ def render_weekday_chart(weekday_by_region: dict, height: int = 460) -> str:
     labels_ua = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]
 
     region_buttons_html = "".join(
-        f'<button class="wd-region-btn" data-region="{r}" data-idx="{i}" '
+        f'<button class="wd-region-btn" data-region="{r}" data-idx="{i}" data-color="{colors[r]}" '
         f'style="padding:6px 14px;border-radius:8px;border:1.5px solid {colors[r]};'
-        f'background:{colors[r]}1a;color:#333;font-size:13px;cursor:pointer;margin-right:8px;margin-bottom:6px;">{r}</button>'
+        f'background:{colors[r]};color:#fff;font-weight:500;font-size:13px;cursor:pointer;margin-right:8px;margin-bottom:6px;">{r}</button>'
         for i, r in enumerate(region_names)
     )
 
@@ -267,12 +347,15 @@ def render_weekday_chart(weekday_by_region: dict, height: int = 460) -> str:
       btn.addEventListener('click', () => {{
         const region = btn.dataset.region;
         const idx = parseInt(btn.dataset.idx);
+        const color = btn.dataset.color;
         if (wdActiveRegions.has(region)) {{
           wdActiveRegions.delete(region);
-          btn.style.opacity = '0.4';
+          btn.style.background = 'transparent';
+          btn.style.color = color;
         }} else {{
           wdActiveRegions.add(region);
-          btn.style.opacity = '1';
+          btn.style.background = color;
+          btn.style.color = '#fff';
         }}
         wdChart.data.datasets[idx].hidden = !wdActiveRegions.has(region);
         wdChart.update();
@@ -573,7 +656,6 @@ if len(selected_regions) > MAX_REGIONS:
     selected_regions = selected_regions[:MAX_REGIONS]
 
 filter_night_only = st.sidebar.checkbox("Тільки нічні тривоги (≈22:00–06:00 UTC)", value=False)
-filter_last_30_days = st.sidebar.checkbox("Тільки останні 30 днів", value=False)
 
 forecast_horizon = st.sidebar.slider("Горизонт прогнозу (днів)", 7, 30, 14)
 
@@ -585,9 +667,6 @@ if not selected_regions:
 filtered_df = df[df["region"].isin(selected_regions)].copy()
 if filter_night_only:
     filtered_df = filtered_df[filtered_df["is_night"]]
-if filter_last_30_days:
-    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
-    filtered_df = filtered_df[filtered_df["started_at"] >= cutoff]
 
 # === SECTION 1: Trend over time ===
 st.header("1. Динаміка тривог у часі")
@@ -610,12 +689,13 @@ for region in selected_regions:
 trend_dates_str = full_date_range.strftime("%Y-%m-%d").tolist()
 components.html(render_trend_chart(trend_dates_str, trend_series_by_region), height=470)
 
-if filter_night_only or filter_last_30_days:
+if filter_night_only:
     st.caption(
-        "Примітка: фільтри 'нічні тривоги' та 'останні 30 днів' застосовано лише "
-        "до показників нижче (сезонність, тривалість, порівняння), а не до графіку "
-        "тренду вище — тренд завжди показує повну денну кількість тривог за весь "
-        "період для коректного порівняння з прогнозом."
+        "Примітка: фільтр 'нічні тривоги' застосовано лише до показників "
+        "нижче (сезонність, тривалість, порівняння), а не до графіку тренду "
+        "вище — тренд завжди показує повну денну кількість тривог за весь "
+        "період для коректного порівняння з прогнозом. Для обмеження "
+        "часового діапазону тренду використовуйте кнопки періоду над графіком."
     )
 
 # === SECTION 2: Seasonality patterns ===
@@ -672,55 +752,66 @@ st.caption(
     "модель не передбачає."
 )
 
+forecast_cards_data = []
 for region in selected_regions:
-    with st.expander(f"📍 {region}", expanded=(len(selected_regions) <= 2)):
-        try:
-            forecast, weekly_pattern = get_forecast_and_pattern(region, forecast_horizon)
-            bt = get_backtest(region)
+    try:
+        forecast, weekly_pattern = get_forecast_and_pattern(region, forecast_horizon)
+        bt = get_backtest(region)
 
-            daily = get_daily_series(region)
-            future_part = forecast[forecast["ds"] > daily["ds"].max()]
+        daily = get_daily_series(region)
+        future_part = forecast[forecast["ds"] > daily["ds"].max()]
 
-            last_14d_avg = daily["y"].tail(14).mean()
-            # Compare like-for-like: average of the next 7 forecasted days
-            # vs. average of the last 7 known days (week-over-week change),
-            # rather than a single-day snapshot.
-            last_7d_avg = daily["y"].tail(7).mean()
-            next_7d_avg = future_part["yhat"].head(7).mean()
-            abs_change = next_7d_avg - last_7d_avg
-            pct_change = (abs_change / last_7d_avg * 100) if last_7d_avg else 0
+        last_14d_avg = daily["y"].tail(14).mean()
+        last_7d_avg = daily["y"].tail(7).mean()
+        next_7d_avg = future_part["yhat"].head(7).mean()
+        abs_change = next_7d_avg - last_7d_avg
+        pct_change = (abs_change / last_7d_avg * 100) if last_7d_avg else 0
 
-            if pct_change > 3:
-                change_arrow = "↑"
-            elif pct_change < -3:
-                change_arrow = "↓"
-            else:
-                change_arrow = "→"
+        forecast_cards_data.append({
+            "region": region,
+            "last_14d_avg": last_14d_avg,
+            "pct_change": pct_change,
+            "abs_change": abs_change,
+            "mae": bt["MAE"],
+        })
+    except ValueError as e:
+        st.error(f"{region}: недостатньо даних для прогнозу ({e})")
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Останні 14 днів", f"{last_14d_avg:.1f}/день")
-            m2.metric(
-                "Очікувана зміна (тиждень/тиждень)",
-                f"{change_arrow} {pct_change:+.0f}% ({abs_change:+.1f}/день)",
-            )
-            m3.metric("Похибка прогнозу", f"±{bt['MAE']:.1f}/день")
-
-            st.caption(
-                f"Порівняння середньої кількості тривог за останні 7 днів "
-                f"({last_7d_avg:.1f}/день) з прогнозованими наступними 7 днями "
-                f"({next_7d_avg:.1f}/день)."
-            )
-
-        except ValueError as e:
-            st.error(f"Недостатньо даних для прогнозу: {e}")
+if forecast_cards_data:
+    components.html(render_forecast_cards(forecast_cards_data), height=220)
 
 st.caption(
     "**Похибка** — середня абсолютна помилка моделі на історичних даних "
     "(backtest): наскільки в середньому прогноз відхилявся від факту, "
-    "у тривогах на день. Високий відсоток похибки при малій середній "
-    "кількості тривог — очікувана математична особливість на малих "
-    "числах, не показник 'поламаної' моделі."
+    "у тривогах на день. Великий відсоток зміни при малій середній "
+    "кількості тривог означає малу абсолютну різницю (показана в дужках) "
+    "— кольори відображають саме % зміни, не абсолютну тривожність."
 )
+
+st.divider()
+st.header("6. Вихідні vs будні дні")
+st.caption(
+    "Інформаційне порівняння середньої кількості тривог по днях тижня. "
+    "Це історична статистика, не оцінка поточного ризику чи рекомендація "
+    "щодо планування поїздок — реальна загроза завжди залежить від "
+    "актуальної воєнної ситуації, а не від дня тижня."
+)
+
+if len(selected_regions) < 2:
+    st.info("Оберіть щонайменше 2 регіони у боковій панелі, щоб побачити це порівняння.")
+else:
+    weekend_data = []
+    for region in selected_regions:
+        sub = df[df["region"] == region]
+        n_weeks = max((sub["started_at"].max() - sub["started_at"].min()).days / 7, 1)
+        weekend_total = len(sub[sub["weekday"].isin(["Saturday", "Sunday"])])
+        weekday_total = len(sub[~sub["weekday"].isin(["Saturday", "Sunday"])])
+        weekend_data.append({
+            "region": region,
+            "weekend_avg": (weekend_total / 2) / n_weeks,
+            "weekday_avg": (weekday_total / 5) / n_weeks,
+        })
+    components.html(render_weekend_info(weekend_data), height=180)
 
 st.divider()
 st.caption(

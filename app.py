@@ -19,6 +19,7 @@ to decide whether to take shelter during an actual alert.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import json
 import plotly.graph_objects as go
@@ -309,7 +310,7 @@ with col1:
     for region in selected_regions:
         sub = hourly[hourly["region"] == region].set_index("hour").reindex(range(24), fill_value=0)
         hourly_by_region[region] = sub["count"].tolist()
-    st.iframe(render_hourly_clock(hourly_by_region), height=500)
+    components.html(render_hourly_clock(hourly_by_region), height=500)
 
 with col2:
     st.subheader("По днях тижня")
